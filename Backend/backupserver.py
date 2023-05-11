@@ -5,12 +5,16 @@ import time
 import threading
 from queue import Queue
 from queue import Empty
+import logging
 
 
 import list_pb2
 import list_pb2_grpc
 
 _ONE_DAY_IN_SECONDS = 60 * 60 * 24
+
+logging.basicConfig(filename='list_service.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 
 def flip_bool_by_string(lst, string):
     for i, pair in enumerate(lst):
@@ -26,6 +30,10 @@ class ListService(list_pb2_grpc.ListServiceServicer):
         self.lock = threading.Lock()
 
     def JoinGroup(self, request: list_pb2.GroupRequest, context: grpc.ServicerContext) -> list_pb2.GroupResponse:
+        print("joining group in backup")
+        print(self.lists)
+        logging.info("joining group in backup")
+        logging.info(self.lists)
         with self.lock:
             if (request.name, request.password) in self.lists:
                 # The group exists
@@ -54,10 +62,12 @@ class ListService(list_pb2_grpc.ListServiceServicer):
 
         self.lists[(group, password)].append((item, False))
         print(f"{item} added to group {group}, {password}")
+        logging.info(f"{item} added to group {group}, {password}")
+
 
         response = list_pb2.ItemResponse(success=True)
         self._notify_clients(group, password, list_pb2.Update(type=list_pb2.Update.ADD, item=item))
-        
+        print(self.lists)
         return response
 
     def CheckItem(self, request: list_pb2.ItemRequest, context: grpc.ServicerContext) -> list_pb2.ItemResponse:
@@ -75,9 +85,10 @@ class ListService(list_pb2_grpc.ListServiceServicer):
             success=False
         
         print(f"{item} check on group {group}, {password}")
+        logging.info(f"{item} check on group {group}, {password}")
 
         response = list_pb2.ItemResponse(success=success)
-        
+        print(self.lists)
         return response
 
 
@@ -87,7 +98,7 @@ class ListService(list_pb2_grpc.ListServiceServicer):
         password = request.password
 
         if (group, password) not in self.lists:
-            self.lists[(group, password)] = []
+            return list_pb2.ItemsResponse(items=None)
 
         items = self.lists[(group, password)]
         formatted_items = []
@@ -119,13 +130,16 @@ class ListService(list_pb2_grpc.ListServiceServicer):
                 pass  # item not found, do nothing
             
             print(f"{item} removed from group {group}, {password}")
+            logging.info(f"{item} removed from group {group}, {password}")
             response = list_pb2.ItemResponse(success=True)
         else:
             print(f"{item} not found in group {group}, {password}")
+            logging.info(f"{item} not found in group {group}, {password}")
             response = list_pb2.ItemResponse(success=False)
 
         if response.success:
             self._notify_clients(group, password, list_pb2.Update(type=list_pb2.Update.DELETE, item=item))
+        print(self.lists)
         return response
 
     def SubscribeToUpdates(self, request: list_pb2.SubscribeRequest, context: grpc.ServicerContext):
@@ -156,13 +170,14 @@ class ListService(list_pb2_grpc.ListServiceServicer):
                 for client_queue in self.subscriptions[(group, password)]:
                     client_queue.put(update)
 
-
 def serve():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     list_pb2_grpc.add_ListServiceServicer_to_server(ListService(), server)
-    server.add_insecure_port('[::]:50058')
+    server.add_insecure_port('[::]:9000')
     server.start()
-    print("Server started listening on port 50058")
+    print("Backup Server started listening on port 9000")
+    logging.info("Backup Server started listening on port 9000")
+
     try:
         while True:
             time.sleep(_ONE_DAY_IN_SECONDS)
